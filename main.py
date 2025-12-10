@@ -12,6 +12,11 @@ app = Flask(__name__)
 # Get API key from environment (secure). Relies ONLY on deployment variable.
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') 
 
+print(f"🔑 GEMINI_API_KEY loaded: {'YES' if GEMINI_API_KEY else 'NO'}")
+if GEMINI_API_KEY:
+    print(f"🔑 Key first 10 chars: {GEMINI_API_KEY[:10]}")
+    print(f"🔑 Key length: {len(GEMINI_API_KEY)}")
+
 print(f"🚀 Talespin - AI Storytelling with Continuity Support")
 
 def generate_story_with_gemini(prompt):
@@ -46,39 +51,63 @@ def generate_story_with_gemini(prompt):
             print(f"🎨 Using creative topic: {story_topic}")
         
         # Google Gemini API endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         
-        # Creative prompt for storytelling
-        story_prompt = f"""You are Talespin, a creative AI storyteller. Write a unique, engaging story (250-350 words) about: {story_topic}
+        
+        # Creative prompt for storytelling (SIMPLIFIED)
+        story_prompt = f"""Write a creative story (250-350 words) about: {story_topic}
 
-Make it:
-1. Original and creative
-2. With vivid descriptions
-3. A clear beginning, middle, and end
-4. Suitable for voice narration
-5. Different from other stories
+Requirements:
+1. Vivid descriptions and clear narrative arc
+2. Suitable for voice narration
+3. Unique and engaging
 
 Story:"""
-        
+
         payload = {
             "contents": [{
                 "parts": [{"text": story_prompt}]
             }],
             "generationConfig": {
                 "temperature": 0.9,
-                "maxOutputTokens": 550, 
+                "maxOutputTokens": 1024,  # INCREASED TO 1024
                 "topP": 0.95
             }
         }
-        
+
         print(f"📡 Calling Gemini API...")
+        print(f"🔄 DEBUG: Full URL being called: {url}")
+        print(f"🔄 DEBUG: Payload being sent: {json.dumps(payload, indent=2)}")
         response = requests.post(url, json=payload, timeout=15)
-        print(f"📊 Status: {response.status_code}")
-        
+        print(f"🔄 DEBUG: HTTP Status Code: {response.status_code}")
+
         if response.status_code == 200:
             result = response.json()
+            print(f"🔄 DEBUG: Full Response: {json.dumps(result, indent=2)[:1000]}")
+            
             if 'candidates' in result and result['candidates']:
-                story = result['candidates'][0]['content']['parts'][0]['text']
+                candidate = result['candidates'][0]
+                
+                # Check for MAX_TOKENS
+                if candidate.get('finishReason') == 'MAX_TOKENS':
+                    print("⚠️ Response truncated by token limit")
+                    return generate_fallback_story(story_topic)
+                
+                # Extract text from various possible formats
+                if 'text' in candidate:
+                    story = candidate['text']
+                elif 'content' in candidate:
+                    if 'text' in candidate['content']:
+                        story = candidate['content']['text']
+                    elif 'parts' in candidate['content'] and candidate['content']['parts']:
+                        story = candidate['content']['parts'][0]['text']
+                    else:
+                        print(f"⚠️ Unexpected content format")
+                        return generate_fallback_story(story_topic)
+                else:
+                    print(f"⚠️ Unexpected candidate format")
+                    return generate_fallback_story(story_topic)
+                
                 print(f"✅ Gemini success! Story length: {len(story)} chars")
                 return story
             else:
@@ -87,9 +116,8 @@ Story:"""
         else:
             print(f"❌ Gemini API error: {response.text[:200]}")
             return generate_fallback_story(story_topic)
-            
     except Exception as e:
-        print(f"❌ Gemini API exception: {str(e)}")
+        print(f"❌ Exception in generate_story_with_gemini: {str(e)}")
         traceback.print_exc()
         return generate_fallback_story(prompt)
 
@@ -224,7 +252,7 @@ def generate_story_with_gemini_continuation(previous_story, user_request=""):
         print(f"🎭 Gemini API for continuation: '{user_request[:50]}...'")
         
         # Google Gemini API endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         
         # Use the specialized continuation prompt
         continuation_prompt = generate_continuation_prompt(previous_story, user_request)
