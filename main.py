@@ -4,16 +4,24 @@ import time
 import traceback
 import os
 import requests
+import random
+import hashlib 
 
 app = Flask(__name__)
 
-# Get API key from environment (secure)
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+# Get API key from environment (secure). Relies ONLY on deployment variable.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') 
 
-print(f"🚀 Talespin - Using Google Gemini API")
+print(f"🚀 Talespin - Using Google Gemini API (Longer Stories)")
 
 def generate_story_with_gemini(prompt):
     """Generate unique stories using Google Gemini API"""
+    
+    # Check if the key is available before making the call
+    if not GEMINI_API_KEY:
+        print("❌ ERROR: GEMINI_API_KEY is not set.")
+        return generate_fallback_story(prompt)
+
     try:
         print(f"🤖 Gemini API for: '{prompt}'")
         
@@ -26,7 +34,8 @@ def generate_story_with_gemini(prompt):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         
         # Creative prompt for storytelling
-        story_prompt = f"""You are Talespin, a creative AI storyteller. Write a unique, engaging short story (100-150 words) about: {clean_prompt}
+        # NOTE: Prompt explicitly asks for a longer range now
+        story_prompt = f"""You are Talespin, a creative AI storyteller. Write a unique, engaging story (250-350 words) about: {clean_prompt}
 
 Make it:
 1. Original and creative
@@ -43,7 +52,8 @@ Story:"""
             }],
             "generationConfig": {
                 "temperature": 0.9,
-                "maxOutputTokens": 300,
+                # 🎯 MODIFIED: Increased token count for longer stories (approx. 250-350 words)
+                "maxOutputTokens": 550, 
                 "topP": 0.95
             }
         }
@@ -60,10 +70,9 @@ Story:"""
                 return story
             else:
                 print(f"⚠️ No candidates in response")
-                return f"A creative story about {clean_prompt}."
+                return generate_fallback_story(clean_prompt)
         else:
             print(f"❌ Gemini API error: {response.text[:200]}")
-            # Fallback to dynamic generation
             return generate_fallback_story(clean_prompt)
             
     except Exception as e:
@@ -72,7 +81,7 @@ Story:"""
         return generate_fallback_story(prompt)
 
 def generate_fallback_story(prompt):
-    """Fallback story generator if API fails"""
+    """Fallback story generator if API fails. This uses the previous dynamic generation code."""
     print(f"🔄 Using fallback generator for: {prompt}")
     
     beginnings = [
@@ -96,7 +105,6 @@ def generate_fallback_story(prompt):
         "realized that the journey itself was the real destination.",
     ]
     
-    import random
     story = random.choice(beginnings) + " "
     story += random.choice(characters) + " embarked on a quest and "
     story += random.choice(events)
@@ -110,7 +118,11 @@ def add_cors(response):
     response.headers['Access-Control-Allow-Headers'] = '*'
     return response
 
+# -------------------------------------------------------------
+# 🎯 CRITICAL FIX: Defining both the path with and without the trailing slash.
+# -------------------------------------------------------------
 @app.route('/v1/chat/completions', methods=['GET', 'POST', 'OPTIONS'])
+@app.route('/v1/chat/completions/', methods=['GET', 'POST', 'OPTIONS'])
 def handle():
     # Handle OPTIONS (CORS preflight)
     if request.method == 'OPTIONS':
@@ -123,7 +135,8 @@ def handle():
             "status": "online",
             "service": "Talespin Proxy",
             "endpoint": "/v1/chat/completions",
-            "ready_for": "POST requests with ElevenLabs format"
+            "ready_for": "POST requests with ElevenLabs format",
+            "api_key_status": "Set" if GEMINI_API_KEY else "Not Set"
         })
     
     # Handle POST (actual story requests)
@@ -131,6 +144,10 @@ def handle():
     print(f"📥 ElevenLabs POST request")
     
     try:
+        if not GEMINI_API_KEY:
+            print("❌ ABORT: Missing GEMINI_API_KEY for POST request.")
+            return jsonify({"error": "Configuration Error: GEMINI_API_KEY is not set."}), 500
+            
         data = request.get_json() or {}
         
         # Get user message
@@ -150,37 +167,41 @@ def handle():
         
         if stream:
             def generate():
-                yield f'data: {json.dumps({
+                # Initial chunk
+                yield 'data: ' + json.dumps({
                     "id": f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": "google-gemini",
                     "choices": [{"delta": {"role": "assistant"}}]
-                })}\n\n'
+                }) + '\n\n'
                 
                 words = story.split()
+                # Stream the story word by word or chunk by chunk
                 for i in range(0, len(words), 2):
                     chunk = " ".join(words[i:i+2]) + " "
-                    yield f'data: {json.dumps({
+                    yield 'data: ' + json.dumps({
                         "id": f"chatcmpl-{int(time.time())}",
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": "google-gemini",
                         "choices": [{"delta": {"content": chunk}}]
-                    })}\n\n'
+                    }) + '\n\n'
                     time.sleep(0.05)
                 
-                yield f'data: {json.dumps({
+                # Final chunk to signal the end
+                yield 'data: ' + json.dumps({
                     "id": f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": "google-gemini",
                     "choices": [{"delta": {}, "finish_reason": "stop"}]
-                })}\n\n'
+                }) + '\n\n'
                 yield 'data: [DONE]\n\n'
             
             return Response(generate(), mimetype='text/event-stream')
         else:
+            # Non-streaming response
             return jsonify({
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion",
@@ -216,14 +237,13 @@ def health():
 @app.route('/test-gemini', methods=['GET'])
 def test_gemini():
     """Test Gemini API with different prompts"""
-    import hashlib
     
     results = []
     prompts = ["space pirates", "robot artists", "dragon scholars"]
     
     for prompt in prompts:
         story = generate_story_with_gemini(prompt)
-        story_hash = hashlib.md5(story.encode()).hexdigest()[:8]
+        story_hash = hashlib.md5(story.encode()).hexdigest()[:8] 
         results.append({
             "prompt": prompt,
             "story_preview": story[:100] + "...",
@@ -247,8 +267,8 @@ if __name__ == '__main__':
     print(f"✅ Talespin - Google Gemini API Integration")
     print(f"🔑 API Key: {'Set' if GEMINI_API_KEY else 'Not set'}")
     print(f"🌐 Endpoints:")
-    print(f"   GET  /v1/chat/completions - Health check")
-    print(f"   POST /v1/chat/completions - Story generation")
-    print(f"   GET  /health - Service status")
-    print(f"   GET  /test-gemini - Test endpoint")
+    print(f"  GET  /v1/chat/completions - Health check")
+    print(f"  POST /v1/chat/completions - Story generation")
+    print(f"  GET  /health - Service status")
+    print(f"  GET  /test-gemini - Test endpoint")
     app.run(host='0.0.0.0', port=port)
