@@ -8,7 +8,7 @@ import requests
 app = Flask(__name__)
 
 # Get API key from environment (secure)
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDKikyGRRdyGqNHcjhYpHAg_64NnW93eV0')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 print(f"🚀 Talespin - Using Google Gemini API")
 
@@ -106,15 +106,29 @@ def generate_fallback_story(prompt):
 @app.after_request
 def add_cors(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS, GET'
+    response.headers['Access-Control-Allow-Headers'] = '*'
     return response
 
-@app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
+@app.route('/v1/chat/completions', methods=['GET', 'POST', 'OPTIONS'])
 def handle():
+    # Handle OPTIONS (CORS preflight)
     if request.method == 'OPTIONS':
         return '', 204
     
+    # Handle GET (ElevenLabs health check)
+    if request.method == 'GET':
+        print("✅ ElevenLabs endpoint check (GET)")
+        return jsonify({
+            "status": "online",
+            "service": "Talespin Proxy",
+            "endpoint": "/v1/chat/completions",
+            "ready_for": "POST requests with ElevenLabs format"
+        })
+    
+    # Handle POST (actual story requests)
     print(f"\n{'='*60}")
-    print(f"📥 ElevenLabs request")
+    print(f"📥 ElevenLabs POST request")
     
     try:
         data = request.get_json() or {}
@@ -183,6 +197,7 @@ def handle():
             
     except Exception as e:
         print(f"❌ Handler error: {str(e)}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
@@ -190,7 +205,12 @@ def health():
     return jsonify({
         "status": "healthy",
         "ai": "Google Gemini API",
-        "stories": "dynamic and unique"
+        "stories": "dynamic and unique",
+        "endpoints": {
+            "elevenlabs": "/v1/chat/completions",
+            "health": "/health",
+            "test": "/test-gemini"
+        }
     })
 
 @app.route('/test-gemini', methods=['GET'])
@@ -226,4 +246,9 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     print(f"✅ Talespin - Google Gemini API Integration")
     print(f"🔑 API Key: {'Set' if GEMINI_API_KEY else 'Not set'}")
+    print(f"🌐 Endpoints:")
+    print(f"   GET  /v1/chat/completions - Health check")
+    print(f"   POST /v1/chat/completions - Story generation")
+    print(f"   GET  /health - Service status")
+    print(f"   GET  /test-gemini - Test endpoint")
     app.run(host='0.0.0.0', port=port)
