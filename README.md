@@ -1,7 +1,12 @@
 # Talespin - AI Storytelling Companion
 
 ## Live Demo
-**Click to talk to Talespin:** https://elevenlabs.io/app/talk-to?agent_id=agent_0301kc257s73ejxr3taxqgccddyt
+**Click to talk to Talespin:** 
+
+https://elevenlabs.io/app/talk-to?agent_id=agent_0601kc68w5kefw5v0rj62t1067by
+
+https://elevenlabs.io/app/talk-to?agent_id=agent_0301kc257s73ejxr3taxqgccddyt
+
 
 ## Architecture
 
